@@ -18,6 +18,11 @@ do
     yes "foobar" | tr '\n' '\0' | dd of=./src/"$folder"/file_"$i" count=$((4096*i))
 done
 
+# deeply nested, small file
+mkdir -p ./src/tiny/tiny2/tiny3/
+echo -n "1234" > ./src/tiny/tiny2/tiny3/tinyfile
+echo -n "1" > ./src/very_tiny
+
 ./server.py dst &
 sleep 1
 ./client.py src &
