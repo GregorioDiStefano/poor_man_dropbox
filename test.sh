@@ -1,6 +1,11 @@
 #!/bin/bash
 set -u 
 
+#
+# A simple testing script that verifies the happy path
+#
+
+
 SOURCE=src
 DEST=dst
 FAILED=false
