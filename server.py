@@ -8,7 +8,7 @@ import io
 import logging
 import hashlib
 import zlib
-from shutil import copyfile
+from shutil import copyfile, move, rmtree
 
 UNSIGNED_LONG_LONG_INT_SIZE = 8
 UNSIGNED_LONG_INT_SIZE = 4
@@ -19,6 +19,7 @@ COMMAND_SIZE = 1
 FILE_UPLOAD_REQUEST = b'F'
 FILE_DELETE_REQUEST = b'D'
 FILE_COPY_REQUEST = b'C'
+MOVE_REQUEST = b'M'
 
 if os.getenv("DEBUG"):
     l = logging.DEBUG
@@ -78,8 +79,29 @@ class Server:
         dst = "%s/%s" % (self.directory, dst)
 
         if self.checkPath(src, self.directory) and self.checkPath(dst, self.directory):
+            # make dir if it doesn't exist
+            dst_folder = os.path.dirname(dst)
+            if not os.path.exists(dst):
+                try:
+                    os.makedirs(dst_folder)
+                except FileExistsError:
+                    pass
+
             copyfile(src, dst)
 
+    def moveFileFolder(self, src, dst):
+        src = "%s/%s" % (self.directory, src)
+        dst = "%s/%s" % (self.directory, dst)
+
+        if self.checkPath(src, self.directory) and self.checkPath(dst, self.directory):
+            dst_folder = os.path.dirname(dst)
+            if not os.path.exists(dst_folder):
+                try:
+                    os.makedirs(dst_folder)
+                except FileExistsError:
+                    pass
+
+            move(src, dst)
 
     def writeFile(self, data, dest):
         if not os.path.exists(dest):
@@ -98,8 +120,13 @@ class Server:
             logging.warn("Path traversal - ignore request.")
             return
 
+        is_dir = os.path.isdir(fp)
+
         try:
-            os.remove(fp)
+            if is_dir:
+                rmtree(fp, True)
+            else:
+                os.remove(fp)
             logging.info(msg="Deleted: " + fp)
         except FileNotFoundError:
             logging.warn("Tried to delete a non-existing file!")
@@ -158,11 +185,11 @@ class Server:
             data = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
             filepath_size = struct.unpack("!L", data)[0]
 
-            data = self.readInBytes(SHA256_SIZE)
-            sha256 = struct.unpack("!32B", data)
-
             data = self.readInBytes(filepath_size)
             filepath = struct.unpack("!%ds" % filepath_size, data)[0]
+
+            data = self.readInBytes(SHA256_SIZE)
+            sha256 = struct.unpack("!32B", data)
 
             # make sure this works
             filepath = filepath.decode("utf-8")
@@ -191,7 +218,7 @@ class Server:
             filepath = filepath.decode()
             self.rmFile(filepath)
 
-        elif request_type == FILE_COPY_REQUEST:
+        elif request_type == FILE_COPY_REQUEST or request_type == MOVE_REQUEST:
             data = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
             src_path_size = struct.unpack("!L", data)[0]
             data = self.readInBytes(src_path_size)
@@ -205,8 +232,12 @@ class Server:
             src_path = src_path.decode()
             dst_path = dst_path.decode()
 
-            logging.debug(msg=("Copying {} to {}".format(src_path, dst_path)))
-            self.copyFileAndRename(src_path, dst_path)
+            if request_type == FILE_COPY_REQUEST:
+                logging.debug(msg=("Copying {} to {}".format(src_path, dst_path)))
+                self.copyFileAndRename(src_path, dst_path)
+            else:
+                logging.debug(msg=("Moving {} to {}".format(src_path, dst_path)))
+                self.moveFileFolder(src_path, dst_path)
 
 if len(sys.argv) != 2:
     raise SystemExit("please pass an empty directory as an argument!")
