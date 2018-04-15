@@ -10,6 +10,7 @@ import hashlib
 import zlib
 from shutil import copyfile, move, rmtree
 
+# SIZES
 UNSIGNED_LONG_LONG_INT_SIZE = 8
 UNSIGNED_LONG_INT_SIZE = 4
 SHA256_SIZE = 32
@@ -48,6 +49,7 @@ class Server:
         data_bytes = self.conn.recv(n)
         return io.BytesIO(data_bytes).read(n)
 
+    # we get the length of the compressed payload, read it all, and then decompress it
     def readCompressedData(self):
         cdata = bytearray()
 
@@ -61,12 +63,12 @@ class Server:
             cdata_left -= len(read)
             cdata += read
 
-        return zlib.decompress(cdata)
+        return zlib.decompress(cdata), cdata_len
 
-
-    def checkPath(self, fp, dl_dir):
+    # make sure we don't get a milicious request that modifies a file outsides of
+    def checkPath(self, fp):
         if os.path.commonprefix((os.path.realpath(fp),
-                                 os.path.realpath(dl_dir))) != os.path.realpath(dl_dir):
+                                 os.path.realpath(self.directory))) != os.path.realpath(self.directory):
             return False
         return True
 
@@ -78,7 +80,7 @@ class Server:
         src = "%s/%s" % (self.directory, src)
         dst = "%s/%s" % (self.directory, dst)
 
-        if self.checkPath(src, self.directory) and self.checkPath(dst, self.directory):
+        if self.checkPath(src) and self.checkPath(dst):
             # make dir if it doesn't exist
             dst_folder = os.path.dirname(dst)
             if not os.path.exists(dst):
@@ -93,7 +95,7 @@ class Server:
         src = "%s/%s" % (self.directory, src)
         dst = "%s/%s" % (self.directory, dst)
 
-        if self.checkPath(src, self.directory) and self.checkPath(dst, self.directory):
+        if self.checkPath(src) and self.checkPath(dst):
             dst_folder = os.path.dirname(dst)
             if not os.path.exists(dst_folder):
                 try:
@@ -116,7 +118,7 @@ class Server:
     def rmFile(self, fp):
         fp = "%s/%s" % (self.directory, fp)
 
-        if not self.checkPath(fp, self.directory):
+        if not self.checkPath(fp):
             logging.warn("Path traversal - ignore request.")
             return
 
@@ -144,15 +146,16 @@ class Server:
             if percent == 100:
                 print()
 
-        if not self.checkPath(fp, self.directory):
+        if not self.checkPath(fp):
             logging.warn("Path traversal - ignoring file download.")
             # we need to read and discard the rest of the payload..
             while bytes_left > 0:
-                data = self.readCompressedData()
+                data, _ = self.readCompressedData()
                 bytes_left -= len(data)
             return
 
         self.truncateFile(fp)
+        total_cdata_len = 0
 
         # special case, write empty file.
         if bytes_left == 0:
@@ -160,7 +163,8 @@ class Server:
             progress(100)
         else:
             while bytes_left > 0:
-                data = self.readCompressedData()
+                data, cdata_len = self.readCompressedData()
+                total_cdata_len += cdata_len
 
                 self.writeFile(data, fp)
                 sha256_calculated.update(data)
@@ -171,6 +175,9 @@ class Server:
         if tuple(sha256_calculated.digest()) != sha256expected:
             logging.warn(msg="Ouch! SHA256 verification failed for: " + fp)
 
+        logging.debug("File size: {}, Data recieved: {}".format(total_size, total_cdata_len))
+
+    # parse header as described in documentation
     def parseHeader(self):
         data = self.readInBytes(UNSIGNED_LONG_LONG_INT_SIZE + COMMAND_SIZE)
 
@@ -209,6 +216,7 @@ class Server:
 
             self.parseFilePayload(filepath, file_size, sha256)
 
+        # delete file request
         elif request_type == FILE_DELETE_REQUEST:
             data = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
             filepath_size = struct.unpack("!L", data)[0]
@@ -218,6 +226,7 @@ class Server:
             filepath = filepath.decode()
             self.rmFile(filepath)
 
+        # copy or move file
         elif request_type == FILE_COPY_REQUEST or request_type == MOVE_REQUEST:
             data = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
             src_path_size = struct.unpack("!L", data)[0]
@@ -239,19 +248,23 @@ class Server:
                 logging.debug(msg=("Moving {} to {}".format(src_path, dst_path)))
                 self.moveFileFolder(src_path, dst_path)
 
-if len(sys.argv) != 2:
-    raise SystemExit("please pass an empty directory as an argument!")
 
-empty_dir = sys.argv[1]
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        raise SystemExit("please pass an empty directory as an argument!")
 
-if os.listdir(empty_dir):
-    raise SystemExit("%s is not empty!" % (empty_dir))
+    empty_dir = sys.argv[1]
 
-s = Server(os.getenv("HOST", "localhost"),
-           int(os.getenv("PORT", 10001)),
-           empty_dir)
+    if os.listdir(empty_dir):
+        raise SystemExit("%s is not empty!" % (empty_dir))
 
-s.setup()
+    s = Server(os.getenv("HOST", "localhost"),
+               int(os.getenv("PORT", 10001)),
+               empty_dir)
 
-while True:
-    s.parseHeader()
+    logger.info("Waiting for client to send a payload to: {}:{}".format(s.host, s.port))
+    s.setup()
+
+
+    while True:
+        s.parseHeader()

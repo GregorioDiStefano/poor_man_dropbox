@@ -11,6 +11,7 @@ import inotify.adapters
 
 READ_BUFFER = 1 * 1024 * 1024
 
+# SIZES
 SHA256_SIZE = 32
 UNSIGNED_LONG_INT_SIZE = 4
 UNSIGNED_LONG_LONG_INT_SIZE = 8
@@ -21,11 +22,6 @@ FILE_DELETE_REQUEST = b'D'
 FILE_COPY_REQUEST = b'C'
 MOVE_REQUEST = b'M'
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server_address = ('localhost', 10001)
-sock.connect(server_address)
-seen_hashes = {}
-
 if os.getenv("DEBUG"):
     l = logging.DEBUG
 else:
@@ -34,167 +30,193 @@ else:
 logging.basicConfig(level=l)
 logger = logging.getLogger('tcpclient')
 
-def hash_file(fp):
-    sha256 = hashlib.sha256()
 
-    with open(fp, 'rb') as f:
-        while True:
-            data = f.read(READ_BUFFER)
-            if not data:
+class Client():
+    seen_hashes = {}
+
+    def __init__(self, host, port, directory):
+        self.host = host
+        self.port = port
+        self.directory = directory
+
+    def setup(self):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_address = (self.host, int(self.port))
+        self.sock.connect(server_address)
+
+    def hash_file(self, fp):
+        sha256 = hashlib.sha256()
+
+        with open(fp, 'rb') as f:
+            while True:
+                data = f.read(READ_BUFFER)
+                if not data:
+                    break
+
+                sha256.update(data)
+        return sha256.digest()
+
+    def remove(self, fp, is_dir):
+        payload_fmt = "!QcL%ds" % len(fp)
+        payload_size = struct.calcsize(payload_fmt)
+        payload = struct.pack(payload_fmt,
+                              payload_size,
+                              FILE_DELETE_REQUEST,
+                              len(fp),
+                              fp.encode())
+        self.sock.sendall(payload)
+
+        # remove hash if fp found
+        to_delete = None
+        for h in self.seen_hashes:
+            if self.seen_hashes[h] == fp:
+                to_delete = h
                 break
 
-            sha256.update(data)
-    return sha256.digest()
+        try:
+            if to_delete:
+                logging.debug("Removed hash: {} from seen_hashes".format(to_delete))
+                del self.seen_hashes[to_delete]
+        except KeyError:
+            logging.warn("failed to remove hash: {}".format(hash))
 
+    # both move and copy operations are similar, only the REQUEST time changes, so we 
+    # use this method instead of duplicating the code
+    def _move_or_copy(self, src, dst, mv):
+        request = FILE_COPY_REQUEST
 
-def remove(fp, is_dir):
-    payload_fmt = "!QcL%ds" % len(fp)
-    payload_size = struct.calcsize(payload_fmt)
-    payload = struct.pack(payload_fmt,
-                          payload_size,
-                          FILE_DELETE_REQUEST,
-                          len(fp),
-                          fp.encode())
-    sock.sendall(payload)
+        if mv:
+            request = MOVE_REQUEST
 
-    # remove hash if fp found
-    to_delete = None
-    for h in seen_hashes:
-        if seen_hashes[h] == fp:
-            to_delete = h
-            break
+        payload_fmt = "!QcL%dsL%ds" % (len(src), len(dst))
+        payload_size = struct.calcsize(payload_fmt)
+        payload = struct.pack(payload_fmt,
+                              payload_size,
+                              request,
+                              len(src),
+                              src.encode(),
+                              len(dst),
+                              dst.encode())
+        self.sock.sendall(payload)
 
-    try:
-        if to_delete:
-            logging.debug("Removed hash: {} from seen_hashes".format(to_delete))
-            del seen_hashes[to_delete]
-    except KeyError:
-        logging.warn("failed to remove hash: {}".format(hash))
+    def send_copy(self, src, dst):
+        self._move_or_copy(src, dst, False)
 
+    def send_file(self, fp):
+        filesize = os.stat(fp).st_size
+        filesha = self.hash_file(fp)
 
-def _move_or_copy(src, dst, mv):
-    request = FILE_COPY_REQUEST
+        logger.info("Sending: {}".format(fp))
+        equivalent_file = self.seen_hashes.get(filesha)
 
-    if mv:
-        request = MOVE_REQUEST
+        # if we have already send this hash to the server, the server has this file!
+        # so, send over a 'COPY' cmd, and copy the original over with a new filename
+        if equivalent_file and equivalent_file != fp and filesize > 0:
+            logger.debug("The server has this file, sending 'COPY' command")
+            self.send_copy(self.seen_hashes.get(filesha), fp)
+            return
+        else:
+            self.seen_hashes[filesha] = fp
 
-    payload_fmt = "!QcL%dsL%ds" % (len(src), len(dst))
-    payload_size = struct.calcsize(payload_fmt)
-    payload = struct.pack(payload_fmt,
-                          payload_size,
-                          request,
-                          len(src),
-                          src.encode(),
-                          len(dst),
-                          dst.encode())
-    sock.sendall(payload)
+        payload_fmt = "!QcL%ds32s" % len(fp)
+        payload_size = struct.calcsize(payload_fmt) + filesize
+        payload = struct.pack(payload_fmt,
+                              payload_size,
+                              FILE_UPLOAD_REQUEST,
+                              len(fp),
+                              fp.encode(),
+                              bytearray(filesha))
+        self.sock.sendall(payload)
 
+        with open(fp, 'rb') as f:
+            while True:
+                data = f.read(READ_BUFFER)
+                if not data:
+                    break
 
-def send_copy(src, dst):
-    _move_or_copy(src, dst, False)
+                cdata = zlib.compress(data, zlib.Z_BEST_COMPRESSION)
+                self.sock.sendall(struct.pack("!L%ds" % len(cdata), len(cdata), cdata))
 
+    def move(self, src, dst, is_dir):
+        self._move_or_copy(src, dst, True)
 
-def send_file(fp):
-    filesize = os.stat(fp).st_size
-    filesha = hash_file(fp)
+        # update location of hash / file dict
 
-    logger.info(msg="Sending: {}".format(fp))
-    equivalent_file = seen_hashes.get(filesha)
+        if is_dir:
+            for h in self.seen_hashes:
+                old_path = self.seen_hashes[h]
+                # go through all files, and update the old dir to the new dir
+                if old_path.startswith(src + "/"):
+                    new_path = dst + "/" + os.path.relpath(old_path, src)
+                    self.seen_hashes[h] = new_path
 
-    # if we have already send this hash to the server, the server has this file!
-    # so, send over a 'COPY' cmd, and copy the original over with a new filename
-    if equivalent_file and equivalent_file != fp and filesize > 0:
-        logger.debug(msg="The server has this file, sending 'COPY' command")
-        send_copy(seen_hashes.get(filesha), fp)
-        return
-    else:
-        seen_hashes[filesha] = fp
+        else:
+            # if file, update src/dst
+            if self.seen_hashes.get(src):
+                self.seen_hashes[src] = dst
 
-    payload_fmt = "!QcL%ds32s" % len(fp)
-    payload_size = struct.calcsize(payload_fmt) + filesize
-    payload = struct.pack(payload_fmt,
-                          payload_size,
-                          FILE_UPLOAD_REQUEST,
-                          len(fp),
-                          fp.encode(),
-                          bytearray(filesha))
-    sock.sendall(payload)
+if len(sys.argv) != 2:
+    raise SystemExit("please pass an source directory as an argument!")
 
-    with open(fp, 'rb') as f:
-        while True:
-            data = f.read(READ_BUFFER)
-            if not data:
-                break
+if __name__ == "__main__":
+    source_dir = sys.argv[1]
 
-            cdata = zlib.compress(data, zlib.Z_BEST_COMPRESSION)
-            sock.sendall(struct.pack("!L%ds" % len(cdata), len(cdata), cdata))
+    if not os.path.isdir(source_dir):
+        raise SystemExit("{} dir. does not exist!".format(source_dir))
 
+    c = Client(os.getenv("HOST", "localhost"),
+               int(os.getenv("PORT", 10001)),
+               source_dir)
+    c.setup()
 
-def move(src, dst, is_dir):
-    _move_or_copy(src, dst, True)
+    # KNOWN: protcol doesn't sync empty folders!
+    for root, dirs, files in os.walk(sys.argv[1]):
+        fps = ([root + "/" + f for f in files])
+        for fp in fps:
+            if os.access(fp, os.R_OK):
+                c.send_file(fp)
 
-    # update location of hash / file dict
-    print("hashes: ", seen_hashes)
+    i = inotify.adapters.InotifyTree(sys.argv[1])
+    moves = {}
 
-    if is_dir:
-        for h in seen_hashes:
-            old_path = seen_hashes[h]
-            # go through all files, and update the old dir to the new dir
-            if old_path.startswith(src + "/"):
-                new_path = dst + "/" + os.path.relpath(old_path, src)
-                seen_hashes[h] = new_path
+    for event in i.event_gen():
+        if event:
 
-    else:
-        # if file, update src/dst
-        if seen_hashes.get(src):
-            seen_hashes[src] = dst
-    print("after hashes: ", seen_hashes)
+            # a new file file is created or modified
+            if "IN_CLOSE_WRITE" in event[1] and len(event) >= 4:
+                fp = event[2] + "/" + event[3]
+                logging.debug("sending new or modified file: {}".format(fp))
+                c.send_file(fp)
 
-
-# KNOWN: protcol doesn't sync empty folders!
-
-for root, dirs, files in os.walk(sys.argv[1]):
-    fps = ([root + "/" + f for f in files])
-    for fp in fps:
-        if os.access(fp, os.R_OK):
-            send_file(fp)
-
-i = inotify.adapters.InotifyTree(sys.argv[1])
-moves = {}
-
-for event in i.event_gen():
-    if event:
-        if "IN_CLOSE_WRITE" in event[1] and len(event) >= 4:
-            fp = event[2] + "/" + event[3]
-            logging.debug(msg="sending new or modified file: {}".format(fp))
-            send_file(fp)
-
-        elif "IN_DELETE" in event[1] and len(event) >= 4:
-            if "IN_ISDIR" in event[1]:
-                is_dir = True
-            else:
-                is_dir = False
-
-            fp = event[2] + "/" + event[3]
-            remove(fp, is_dir)
-
-        elif "IN_MOVED_FROM" in event[1] and len(event) >= 4:
+            # a file is deleted!
+            elif "IN_DELETE" in event[1] and len(event) >= 4:
                 if "IN_ISDIR" in event[1]:
                     is_dir = True
                 else:
                     is_dir = False
 
                 fp = event[2] + "/" + event[3]
-                moves[event[0].cookie] = {"dir": is_dir, "src": fp}
+                c.remove(fp, is_dir)
 
-        elif "IN_MOVED_TO" in event[1] and len(event) >= 4:
-                fp = event[2] + "/" + event[3]
-                mv = moves[event[0].cookie]
+            # keep track of file that moved (via cookie)
+            elif "IN_MOVED_FROM" in event[1] and len(event) >= 4:
+                    if "IN_ISDIR" in event[1]:
+                        is_dir = True
+                    else:
+                        is_dir = False
 
-                is_dir = mv["dir"]
-                src = mv["src"]
-                dst = fp
+                    fp = event[2] + "/" + event[3]
+                    moves[event[0].cookie] = {"dir": is_dir, "src": fp}
 
-                logging.debug(msg="moving (is_dir: {}) from: {} to: {}".format(is_dir, src, dst))
-                move(src, dst, is_dir)
+            # once file is finished being moved, we move it.
+            elif "IN_MOVED_TO" in event[1] and len(event) >= 4:
+                    fp = event[2] + "/" + event[3]
+                    mv = moves[event[0].cookie]
+
+                    is_dir = mv["dir"]
+                    src = mv["src"]
+                    dst = fp
+
+                    logging.debug("moving (is_dir: {}) from: {} to: {}".format(is_dir, src, dst))
+                    c.move(src, dst, is_dir)
 
