@@ -21,6 +21,7 @@ FILE_UPLOAD_REQUEST = b'F'
 FILE_DELETE_REQUEST = b'D'
 FILE_COPY_REQUEST = b'C'
 MOVE_REQUEST = b'M'
+FOLDER_CREATE_REQUEST = b'X'
 
 if os.getenv("DEBUG"):
     l = logging.DEBUG
@@ -155,8 +156,33 @@ class Client():
             if self.seen_hashes.get(src):
                 self.seen_hashes[src] = dst
 
+    def make_dir(self, fp):
+        payload_fmt = "!QcL%ds" % len(fp)
+        payload_size = struct.calcsize(payload_fmt)
+        payload = struct.pack(payload_fmt,
+                              payload_size,
+                              FOLDER_CREATE_REQUEST,
+                              len(fp),
+                              fp.encode())
+
+        self.sock.sendall(payload)
+        logger.info("Creating empty folder: {}".format(fp))
+
+
 if len(sys.argv) != 2:
     raise SystemExit("please pass an source directory as an argument!")
+
+
+def crawl_dir_and_send_files(c, fp):
+    for root, dirs, files in os.walk(fp):
+        if not dirs and not files:
+            # empty folder, lets make it.
+            c.make_dir(root)
+
+        fps = ([root + "/" + f for f in files])
+        for fp in fps:
+            if os.access(fp, os.R_OK):
+                c.send_file(fp)
 
 if __name__ == "__main__":
     source_dir = sys.argv[1]
@@ -169,12 +195,7 @@ if __name__ == "__main__":
                source_dir)
     c.setup()
 
-    # KNOWN: protcol doesn't sync empty folders!
-    for root, dirs, files in os.walk(sys.argv[1]):
-        fps = ([root + "/" + f for f in files])
-        for fp in fps:
-            if os.access(fp, os.R_OK):
-                c.send_file(fp)
+    crawl_dir_and_send_files(c, source_dir)
 
     i = inotify.adapters.InotifyTree(sys.argv[1])
     moves = {}
@@ -219,4 +240,16 @@ if __name__ == "__main__":
 
                     logging.debug("moving (is_dir: {}) from: {} to: {}".format(is_dir, src, dst))
                     c.move(src, dst, is_dir)
+
+            # create directory
+            elif "IN_CREATE" in event[1] and "IN_ISDIR" in event[1]:
+                fp = event[2] + "/" + event[3]
+                c.make_dir(fp)
+
+                #also, check if that directory has any content (inotify doesnt tell us!)
+                crawl_dir_and_send_files(c, fp)
+
+
+
+
 

@@ -21,6 +21,7 @@ FILE_UPLOAD_REQUEST = b'F'
 FILE_DELETE_REQUEST = b'D'
 FILE_COPY_REQUEST = b'C'
 MOVE_REQUEST = b'M'
+FOLDER_CREATE_REQUEST = b'X'
 
 if os.getenv("DEBUG"):
     l = logging.DEBUG
@@ -72,9 +73,15 @@ class Server:
             return False
         return True
 
-    def truncateFile(self, dest):
-        if os.path.exists(dest):
-            os.truncate(dest, 0)
+    def truncateFile(self, dst):
+        if os.path.exists(dst):
+            os.truncate(dst, 0)
+
+    def make_folder(self, fp):
+        dst = "%s/%s" % (self.directory, fp)
+        if self.checkPath(dst):
+            if not os.path.exists(dst):
+                os.makedirs(dst)
 
     def copyFileAndRename(self, src, dst):
         src = "%s/%s" % (self.directory, src)
@@ -247,7 +254,16 @@ class Server:
             else:
                 logging.debug(msg=("Moving {} to {}".format(src_path, dst_path)))
                 self.moveFileFolder(src_path, dst_path)
+        
+        elif request_type == FOLDER_CREATE_REQUEST:
+            data = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
+            folder_path_size = struct.unpack("!L", data)[0]
+            data = self.readInBytes(folder_path_size)
+            folder_path = struct.unpack("!%ds" % folder_path_size, data)[0]
+            folder_path = folder_path.decode()
 
+            logging.debug("Creating folder: {}".format(folder_path))
+            self.make_folder(folder_path)
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
