@@ -7,7 +7,9 @@ import struct
 import io
 import logging
 import hashlib
+import zlib
 
+UNSIGNED_LONG_LONG_INT_SIZE = 8
 UNSIGNED_LONG_INT_SIZE = 4
 SHA256_SIZE = 32
 COMMAND_SIZE = 1
@@ -44,6 +46,22 @@ class Server:
     def readInBytes(self, n):
         data_bytes = self.conn.recv(n)
         return io.BytesIO(data_bytes).read(n)
+
+    def readCompressedData(self):
+        cdata = bytearray()
+
+        cdata_len = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
+        cdata_len = struct.unpack("!L", cdata_len)[0]
+
+        cdata_left = cdata_len
+
+        while cdata_left > 0:
+            read = self.readInBytes(cdata_left)
+            cdata_left -= len(read)
+            cdata += read
+
+        return zlib.decompress(cdata)
+
 
     def checkPath(self, fp, dl_dir):
         if os.path.commonprefix((os.path.realpath(fp),
@@ -88,20 +106,18 @@ class Server:
 
         def progress(percent):
             print("downloading %s, %d%% complete.." % (fp, percent), end="\r")
+            if percent == 100:
+                print()
 
         if not self.checkPath(fp, self.directory):
             logging.warn("Path traversal - ignoring file download.")
-
             # we need to read and discard the rest of the payload..
             while bytes_left > 0:
-                read = self.conn.recv(min(BUF_SIZE, bytes_left))
-                bytes_left -= len(read)
+                data = self.readCompressedData()
+                bytes_left -= len(data)
             return
 
         self.truncateFile(fp)
-
-        # this should never happen, if it does, there's a bug!
-        assert bytes_left >= 0, "bytes left to download is negative! error!"
 
         # special case, write empty file.
         if bytes_left == 0:
@@ -109,8 +125,7 @@ class Server:
             progress(100)
         else:
             while bytes_left > 0:
-                file_payload = self.conn.recv(min(BUF_SIZE, bytes_left))
-                data = io.BytesIO(file_payload).read()
+                data = self.readCompressedData()
 
                 self.writeFile(data, fp)
                 sha256_calculated.update(data)
@@ -118,24 +133,25 @@ class Server:
 
                 progress((total_size-bytes_left)/total_size * 100)
 
-        print()
-
         if tuple(sha256_calculated.digest()) != sha256expected:
             logging.warn(msg="Ouch! SHA256 verification failed for: " + fp)
 
     def parseHeader(self):
-        data = self.readInBytes(COMMAND_SIZE + (UNSIGNED_LONG_INT_SIZE * 2))
+        data = self.readInBytes(COMMAND_SIZE + UNSIGNED_LONG_LONG_INT_SIZE)
 
         if len(data) == 0:
             print("Connection closed? Bye!")
             sys.exit(0)
 
         # make sure we have enough bytes!
-        total_payload_size, request_type, filepath_size = struct.unpack("!LcL", data)
-        data = self.readInBytes(SHA256_SIZE)
-        sha256 = struct.unpack("!32B", data)
+        total_payload_size, request_type = struct.unpack("!Qc", data)
 
         if request_type == FILE_UPLOAD_REQUEST:
+            data = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
+            filepath_size = struct.unpack("!L", data)[0]
+            data = self.readInBytes(SHA256_SIZE)
+            sha256 = struct.unpack("!32B", data)
+
             data = self.readInBytes(filepath_size)
 
             filepath = struct.unpack("!%ds" % filepath_size, data)[0]
