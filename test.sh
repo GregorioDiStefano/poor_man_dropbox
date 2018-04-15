@@ -35,6 +35,7 @@ function create_test_files {
     # empty file
     touch "$SOURCE"/empty
 
+
     # deeply nested, small file
     mkdir -p ./$SOURCE/tiny/tiny2/tiny3/
     echo -n "1234" > ./$SOURCE/tiny/tiny2/tiny3/tinyfile
@@ -73,7 +74,7 @@ create_test_files
 DEBUG=1 ./server.py $DEST &
 sleep 1
 ./client.py $SOURCE &
-sleep 5
+sleep 10
 
 kill %1
 kill %2
