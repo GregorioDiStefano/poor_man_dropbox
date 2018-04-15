@@ -8,17 +8,17 @@ import io
 import logging
 import hashlib
 import zlib
+from shutil import copyfile
 
 UNSIGNED_LONG_LONG_INT_SIZE = 8
 UNSIGNED_LONG_INT_SIZE = 4
 SHA256_SIZE = 32
 COMMAND_SIZE = 1
 
-BUF_SIZE = 1024 * 64
-
 # REQUESTS
 FILE_UPLOAD_REQUEST = b'F'
 FILE_DELETE_REQUEST = b'D'
+FILE_COPY_REQUEST = b'C'
 
 if os.getenv("DEBUG"):
     l = logging.DEBUG
@@ -72,6 +72,14 @@ class Server:
     def truncateFile(self, dest):
         if os.path.exists(dest):
             os.truncate(dest, 0)
+
+    def copyFileAndRename(self, src, dst):
+        src = "%s/%s" % (self.directory, src)
+        dst = "%s/%s" % (self.directory, dst)
+
+        if self.checkPath(src, self.directory) and self.checkPath(dst, self.directory):
+            copyfile(src, dst)
+
 
     def writeFile(self, data, dest):
         if not os.path.exists(dest):
@@ -137,7 +145,7 @@ class Server:
             logging.warn(msg="Ouch! SHA256 verification failed for: " + fp)
 
     def parseHeader(self):
-        data = self.readInBytes(COMMAND_SIZE + UNSIGNED_LONG_LONG_INT_SIZE)
+        data = self.readInBytes(UNSIGNED_LONG_LONG_INT_SIZE + COMMAND_SIZE)
 
         if len(data) == 0:
             print("Connection closed? Bye!")
@@ -149,16 +157,23 @@ class Server:
         if request_type == FILE_UPLOAD_REQUEST:
             data = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
             filepath_size = struct.unpack("!L", data)[0]
+
             data = self.readInBytes(SHA256_SIZE)
             sha256 = struct.unpack("!32B", data)
 
             data = self.readInBytes(filepath_size)
-
             filepath = struct.unpack("!%ds" % filepath_size, data)[0]
 
             # make sure this works
             filepath = filepath.decode("utf-8")
-            file_size = total_payload_size - (UNSIGNED_LONG_INT_SIZE * 2) - filepath_size - SHA256_SIZE
+
+            # we need to do a little math to determine that actual filesize
+            file_size = (total_payload_size
+                         - UNSIGNED_LONG_LONG_INT_SIZE
+                         - COMMAND_SIZE
+                         - UNSIGNED_LONG_INT_SIZE
+                         - filepath_size
+                         - SHA256_SIZE)
 
             logging.debug(msg=("Total payload: %s" % repr(total_payload_size),
                                "Filepath size: %s" % repr(filepath_size),
@@ -168,20 +183,43 @@ class Server:
             self.parseFilePayload(filepath, file_size, sha256)
 
         elif request_type == FILE_DELETE_REQUEST:
+            data = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
+            filepath_size = struct.unpack("!L", data)[0]
+
             data = self.readInBytes(filepath_size)
             filepath = struct.unpack("!%ds" % filepath_size, data)[0]
-            filepath = filepath.decode("utf-8")
+            filepath = filepath.decode()
             self.rmFile(filepath)
 
+        elif request_type == FILE_COPY_REQUEST:
+            data = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
+            src_path_size = struct.unpack("!L", data)[0]
+            data = self.readInBytes(src_path_size)
+            src_path = struct.unpack("!%ds" % src_path_size, data)[0]
+
+            data = self.readInBytes(UNSIGNED_LONG_INT_SIZE)
+            dst_path_size = struct.unpack("!L", data)[0]
+            data = self.readInBytes(dst_path_size)
+            dst_path = struct.unpack("!%ds" % dst_path_size, data)[0]
+
+            src_path = src_path.decode()
+            dst_path = dst_path.decode()
+
+            logging.debug(msg=("Copying {} to {}".format(src_path, dst_path)))
+            self.copyFileAndRename(src_path, dst_path)
 
 if len(sys.argv) != 2:
     raise SystemExit("please pass an empty directory as an argument!")
+
 empty_dir = sys.argv[1]
 
 if os.listdir(empty_dir):
     raise SystemExit("%s is not empty!" % (empty_dir))
 
-s = Server("localhost", 10001, empty_dir)
+s = Server(os.getenv("HOST", "localhost"),
+           int(os.getenv("PORT", 10001)),
+           empty_dir)
+
 s.setup()
 
 while True:
