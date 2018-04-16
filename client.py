@@ -173,7 +173,7 @@ if len(sys.argv) != 2:
     raise SystemExit("please pass an source directory as an argument!")
 
 
-def crawl_dir_and_send_files(c, fp):
+def crawl_dir_and_send(c, fp):
     for root, dirs, files in os.walk(fp):
         if not dirs and not files:
             # empty folder, lets make it.
@@ -195,22 +195,22 @@ if __name__ == "__main__":
                source_dir)
     c.setup()
 
-    crawl_dir_and_send_files(c, source_dir)
+    crawl_dir_and_send(c, source_dir)
 
     i = inotify.adapters.InotifyTree(sys.argv[1])
     moves = {}
 
     for event in i.event_gen():
-        if event:
+        if event and len(event) >= 4:
 
             # a new file file is created or modified
-            if "IN_CLOSE_WRITE" in event[1] and len(event) >= 4:
+            if "IN_CLOSE_WRITE" in event[1]:
                 fp = event[2] + "/" + event[3]
                 logging.debug("sending new or modified file: {}".format(fp))
                 c.send_file(fp)
 
             # a file is deleted!
-            elif "IN_DELETE" in event[1] and len(event) >= 4:
+            elif "IN_DELETE" in event[1]:
                 if "IN_ISDIR" in event[1]:
                     is_dir = True
                 else:
@@ -220,7 +220,7 @@ if __name__ == "__main__":
                 c.remove(fp, is_dir)
 
             # keep track of file that moved (via cookie)
-            elif "IN_MOVED_FROM" in event[1] and len(event) >= 4:
+            elif "IN_MOVED_FROM" in event[1]:
                     if "IN_ISDIR" in event[1]:
                         is_dir = True
                     else:
@@ -230,7 +230,7 @@ if __name__ == "__main__":
                     moves[event[0].cookie] = {"dir": is_dir, "src": fp}
 
             # once file is finished being moved, we move it.
-            elif "IN_MOVED_TO" in event[1] and len(event) >= 4:
+            elif "IN_MOVED_TO" in event[1]:
                     fp = event[2] + "/" + event[3]
                     mv = moves[event[0].cookie]
 
@@ -247,9 +247,4 @@ if __name__ == "__main__":
                 c.make_dir(fp)
 
                 #also, check if that directory has any content (inotify doesnt tell us!)
-                crawl_dir_and_send_files(c, fp)
-
-
-
-
-
+                crawl_dir_and_send(c, fp)
