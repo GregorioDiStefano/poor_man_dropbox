@@ -47,6 +47,8 @@ class Server:
         self.conn, _ = self.sock.accept()
 
     def readInBytes(self, n):
+        # BUG?: we should probably make sure we read n bytes
+        
         data_bytes = self.conn.recv(n)
         return io.BytesIO(data_bytes).read(n)
 
@@ -67,7 +69,7 @@ class Server:
         return zlib.decompress(cdata), cdata_len
 
     # make sure we don't get a milicious request that modifies a file outsides of
-    def checkPath(self, fp):
+    def isPathValid(self, fp):
         if os.path.commonprefix((os.path.realpath(fp),
                                  os.path.realpath(self.directory))) != os.path.realpath(self.directory):
             return False
@@ -79,7 +81,7 @@ class Server:
 
     def make_folder(self, fp):
         dst = "%s/%s" % (self.directory, fp)
-        if self.checkPath(dst):
+        if self.isPathValid(dst):
             if not os.path.exists(dst):
                 os.makedirs(dst)
 
@@ -87,7 +89,7 @@ class Server:
         src = "%s/%s" % (self.directory, src)
         dst = "%s/%s" % (self.directory, dst)
 
-        if self.checkPath(src) and self.checkPath(dst):
+        if self.isPathValid(src) and self.isPathValid(dst):
             # make dir if it doesn't exist
             dst_folder = os.path.dirname(dst)
             if not os.path.exists(dst):
@@ -102,7 +104,7 @@ class Server:
         src = "%s/%s" % (self.directory, src)
         dst = "%s/%s" % (self.directory, dst)
 
-        if self.checkPath(src) and self.checkPath(dst):
+        if self.isPathValid(src) and self.isPathValid(dst):
             dst_folder = os.path.dirname(dst)
             if not os.path.exists(dst_folder):
                 try:
@@ -125,7 +127,7 @@ class Server:
     def rmFile(self, fp):
         fp = "%s/%s" % (self.directory, fp)
 
-        if not self.checkPath(fp):
+        if not self.isPathValid(fp):
             logging.warn("Path traversal - ignore request.")
             return
 
@@ -153,7 +155,7 @@ class Server:
             if percent == 100:
                 print()
 
-        if not self.checkPath(fp):
+        if not self.isPathValid(fp):
             logging.warn("Path traversal - ignoring file download.")
             # we need to read and discard the rest of the payload..
             while bytes_left > 0:
