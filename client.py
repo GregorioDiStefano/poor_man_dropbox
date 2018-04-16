@@ -40,7 +40,7 @@ class Client():
         server_address = (self.host, int(self.port))
         self.sock.connect(server_address)
 
-    def hash_file(self, fp):
+    def hashFile(self, fp):
         sha256 = hashlib.sha256()
 
         with open(fp, 'rb') as f:
@@ -78,7 +78,7 @@ class Client():
 
     # both move and copy operations are similar, only the REQUEST time changes, so we 
     # use this method instead of duplicating the code
-    def _move_or_copy(self, src, dst, mv):
+    def _moveOrCopy(self, src, dst, mv):
         request = FILE_COPY_REQUEST
 
         if mv:
@@ -95,12 +95,12 @@ class Client():
                               dst.encode())
         self.sock.sendall(payload)
 
-    def send_copy(self, src, dst):
-        self._move_or_copy(src, dst, False)
+    def sendCopy(self, src, dst):
+        self._moveOrCopy(src, dst, False)
 
-    def send_file(self, fp):
+    def sendFile(self, fp):
         filesize = os.stat(fp).st_size
-        filesha = self.hash_file(fp)
+        filesha = self.hashFile(fp)
 
         logger.info("Sending: {}".format(fp))
         equivalent_file = self.seen_hashes.get(filesha)
@@ -109,7 +109,7 @@ class Client():
         # so, send over a 'COPY' cmd, and copy the original over with a new filename
         if equivalent_file and equivalent_file != fp and filesize > 0:
             logger.debug("The server has this file, sending 'COPY' command")
-            self.send_copy(self.seen_hashes.get(filesha), fp)
+            self.sendCopy(self.seen_hashes.get(filesha), fp)
             return
         else:
             self.seen_hashes[filesha] = fp
@@ -134,7 +134,7 @@ class Client():
                 self.sock.sendall(struct.pack("!L%ds" % len(cdata), len(cdata), cdata))
 
     def move(self, src, dst, is_dir):
-        self._move_or_copy(src, dst, True)
+        self._moveOrCopy(src, dst, True)
 
         # update location of hash / file dict
 
@@ -151,7 +151,7 @@ class Client():
             if self.seen_hashes.get(src):
                 self.seen_hashes[src] = dst
 
-    def make_dir(self, fp):
+    def makeDir(self, fp):
         payload_fmt = "!QcL%ds" % len(fp)
         payload_size = struct.calcsize(payload_fmt)
         payload = struct.pack(payload_fmt,
@@ -168,7 +168,7 @@ if len(sys.argv) != 2:
     raise SystemExit("please pass an source directory as an argument!")
 
 
-def crawl_dir_and_send(c, fp):
+def crawlDirAndSend(c, fp):
     for root, dirs, files in os.walk(fp):
         if not dirs and not files:
             # empty folder, lets make it.
@@ -177,7 +177,7 @@ def crawl_dir_and_send(c, fp):
         fps = ([root + "/" + f for f in files])
         for fp in fps:
             if os.access(fp, os.R_OK):
-                c.send_file(fp)
+                c.sendFile(fp)
 
 if __name__ == "__main__":
     source_dir = sys.argv[1]
@@ -190,7 +190,7 @@ if __name__ == "__main__":
                source_dir)
     c.setup()
 
-    crawl_dir_and_send(c, source_dir)
+    crawlDirAndSend(c, source_dir)
 
     i = inotify.adapters.InotifyTree(sys.argv[1])
     moves = {}
@@ -202,7 +202,7 @@ if __name__ == "__main__":
             if "IN_CLOSE_WRITE" in event[1]:
                 fp = event[2] + "/" + event[3]
                 logging.debug("sending new or modified file: {}".format(fp))
-                c.send_file(fp)
+                c.sendFile(fp)
 
             # a file is deleted!
             elif "IN_DELETE" in event[1]:
@@ -239,7 +239,7 @@ if __name__ == "__main__":
             # create directory
             elif "IN_CREATE" in event[1] and "IN_ISDIR" in event[1]:
                 fp = event[2] + "/" + event[3]
-                c.make_dir(fp)
+                c.makeDir(fp)
 
-                #also, check if that directory has any content (inotify doesnt tell us!)
-                crawl_dir_and_send(c, fp)
+                # also, check if that directory has any content (inotify doesnt tell us!)
+                crawlDirAndSend(c, fp)
