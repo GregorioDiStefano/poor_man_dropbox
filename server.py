@@ -79,7 +79,7 @@ class Server:
         if os.path.exists(dst):
             os.truncate(dst, 0)
 
-    def make_folder(self, fp):
+    def makeFolder(self, fp):
         dst = "%s/%s" % (self.directory, fp)
         if self.isPathValid(dst):
             if not os.path.exists(dst):
@@ -265,7 +265,7 @@ class Server:
             folder_path = folder_path.decode()
 
             logging.debug("Creating folder: {}".format(folder_path))
-            self.make_folder(folder_path)
+            self.makeFolder(folder_path)
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
