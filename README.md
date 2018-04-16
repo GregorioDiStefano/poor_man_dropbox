@@ -22,8 +22,7 @@ If you want the client to connect to remove host, use the same: `export HOST=192
 
 Known issues:
 
-- the inotify python module does not detect directories created via: mkdir -p foobar/1/2, only "foobar" is watched
-- creating an empty directory is not reflected
+- there has been some bugs witnessed in regards to moving folders (might be fixed now?)
 
 ---
 
@@ -41,9 +40,11 @@ request type: *1 byte* , the type of request being sent, values: `F` | `C` | `D`
 
     'C' indicates *copy instruction*
     
+    'M' indicates a file or folder *move*
+    
     'D' indicates *delete instruction*
 
-    'M' indicates a file or folder *move*
+    'X' indicates a new folder must be created
 
 ---
 
@@ -60,7 +61,12 @@ A `F` request contains the following extra fields:
 
 The remaining payload can be calculated by simply subtracting <payload-size> from the amount of header bytes recieved.
 
-The reset of payload sent is compressed with zlib, with max compression.
+The reset of payload sent is:
+
+    [<length-of-cdata><cdata>]
+
+*length-of-cdata*: length of zlib compressed payload, value: *0 to (2^32)-1*
+*cdata*:           compressed data bytes
 
 --- 
 
@@ -91,5 +97,7 @@ A `D` request contains the following extra fields:
 *filepath*: same as filepath described above 
 
 ---
+
+A `X` request is the same as a `D` request, as above, except the server creates an empty folder. 
 
 
