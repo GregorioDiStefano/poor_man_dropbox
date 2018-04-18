@@ -187,7 +187,7 @@ class Server:
         logging.debug("File size: {}, Data recieved: {}".format(total_size, total_cdata_len))
 
     # parse header as described in documentation
-    def parseHeader(self):
+    def parse(self):
         data = self.readInBytes(UNSIGNED_LONG_LONG_INT_SIZE + COMMAND_SIZE)
 
         if len(data) == 0:
@@ -285,4 +285,4 @@ if __name__ == "__main__":
 
 
     while True:
-        s.parseHeader()
+        s.parse()
