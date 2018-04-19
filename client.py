@@ -62,19 +62,20 @@ class Client():
                               fp.encode())
         self.sock.sendall(payload)
 
-        # remove hash if fp found
-        to_delete = None
+        # remove hash if dir or file found in known hashes
+        to_delete = []
         for h in self.seen_hashes:
-            if self.seen_hashes[h] == fp:
-                to_delete = h
+            if self.seen_hashes[h] == fp or is_dir and os.path.dirname(self.seen_hashes[h]) == fp:
+                to_delete.append(h)
                 break
 
-        try:
-            if to_delete:
-                logging.debug("Removed hash: {} from seen_hashes".format(to_delete))
-                del self.seen_hashes[to_delete]
-        except KeyError:
-            logging.warn("failed to remove hash: {}".format(hash))
+        if to_delete:
+            for d in to_delete:
+                logging.debug("Removed hash: {} from seen_hashes for {}".format(to_delete, fp))
+                try:
+                    del self.seen_hashes[d]
+                except KeyError:
+                    pass
 
     # both move and copy operations are similar, only the REQUEST time changes, so we 
     # use this method instead of duplicating the code
@@ -99,11 +100,13 @@ class Client():
         self._moveOrCopy(src, dst, False)
 
     def sendFile(self, fp):
+
         filesize = os.stat(fp).st_size
         filesha = self.hashFile(fp)
 
         logger.info("Sending: {}".format(fp))
         equivalent_file = self.seen_hashes.get(filesha)
+
 
         # if we have already send this hash to the server, the server has this file!
         # so, send over a 'COPY' cmd, and copy the original over with a new filename
@@ -172,9 +175,9 @@ def crawlDirAndSend(c, fp):
     for root, dirs, files in os.walk(fp):
         if not dirs and not files:
             # empty folder, lets make it.
-            c.make_dir(root)
+            c.makeDir(root)
 
-        fps = ([root + "/" + f for f in files])
+        fps = ([os.path.join(root, f) for f in files])
         for fp in fps:
             if os.access(fp, os.R_OK):
                 c.sendFile(fp)
@@ -200,7 +203,8 @@ if __name__ == "__main__":
 
             # a new file file is created or modified
             if "IN_CLOSE_WRITE" in event[1]:
-                fp = event[2] + "/" + event[3]
+                fp = os.path.join(event[2], event[3])
+
                 logging.debug("sending new or modified file: {}".format(fp))
                 c.sendFile(fp)
 
@@ -211,7 +215,7 @@ if __name__ == "__main__":
                 else:
                     is_dir = False
 
-                fp = event[2] + "/" + event[3]
+                fp = os.path.join(event[2], event[3])
                 c.remove(fp, is_dir)
 
             # keep track of file that moved (via cookie)
@@ -221,12 +225,12 @@ if __name__ == "__main__":
                     else:
                         is_dir = False
 
-                    fp = event[2] + "/" + event[3]
+                    fp = os.path.join(event[2], event[3])
                     moves[event[0].cookie] = {"dir": is_dir, "src": fp}
 
             # once file is finished being moved, we move it.
             elif "IN_MOVED_TO" in event[1]:
-                    fp = event[2] + "/" + event[3]
+                    fp = os.path.join(event[2], event[3])
                     mv = moves[event[0].cookie]
 
                     is_dir = mv["dir"]
@@ -238,7 +242,7 @@ if __name__ == "__main__":
 
             # create directory
             elif "IN_CREATE" in event[1] and "IN_ISDIR" in event[1]:
-                fp = event[2] + "/" + event[3]
+                fp = os.path.join(event[2], event[3])
                 c.makeDir(fp)
 
                 # also, check if that directory has any content (inotify doesnt tell us!)
