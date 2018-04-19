@@ -80,14 +80,14 @@ class Server:
             os.truncate(dst, 0)
 
     def makeFolder(self, fp):
-        dst = "%s/%s" % (self.directory, fp)
+        dst = os.path.join(self.directory, fp)
         if self.isPathValid(dst):
             if not os.path.exists(dst):
                 os.makedirs(dst)
 
     def copyFileAndRename(self, src, dst):
-        src = "%s/%s" % (self.directory, src)
-        dst = "%s/%s" % (self.directory, dst)
+        src = os.path.join(self.directory, src)
+        dst = os.path.join(self.directory, dst)
 
         if self.isPathValid(src) and self.isPathValid(dst):
             # make dir if it doesn't exist
@@ -101,8 +101,8 @@ class Server:
             copyfile(src, dst)
 
     def moveFileFolder(self, src, dst):
-        src = "%s/%s" % (self.directory, src)
-        dst = "%s/%s" % (self.directory, dst)
+        src = os.path.join(self.directory, src)
+        dst = os.path.join(self.directory, dst)
 
         if self.isPathValid(src) and self.isPathValid(dst):
             dst_folder = os.path.dirname(dst)
@@ -125,7 +125,7 @@ class Server:
             f.write(data)
 
     def rmFile(self, fp):
-        fp = "%s/%s" % (self.directory, fp)
+        fp = os.path.join(self.directory, fp)
 
         if not self.isPathValid(fp):
             logging.warn("Path traversal - ignore request.")
@@ -145,7 +145,7 @@ class Server:
             logging.warn("Tried to delete a folder!")
 
     def parseFilePayload(self, fp, size, sha256expected):
-        fp = "%s/%s" % (self.directory, fp)
+        fp = os.path.join(self.directory, fp)
 
         sha256_calculated = hashlib.sha256()
         bytes_left, total_size = size, size
