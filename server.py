@@ -42,6 +42,7 @@ class Server:
     def setup(self):
         server_address = (self.host, self.port)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.settimeout(30)
         self.sock.bind(server_address)
         self.sock.listen(1)
         self.conn, _ = self.sock.accept()
