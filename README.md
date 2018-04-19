@@ -22,19 +22,19 @@ If you want the client to connect to remove host, use the same: `export HOST=192
 
 Known issues:
 
-- there has been some bugs witnessed in regards to moving folders (might be fixed now?)
+-there has been some bugs witnessed in regards to moving folders (might be fixed now?)-
 
 ---
 
 ### BINARY FORMAT
-
+Endianness: Network order
 Every header starts with:
 
     [<payload-size><request-type>]
 
 payload size: *8 bytes*, the entire size of the payload being sent, values : *0 to (2^64)-1*
 
-request type: *1 byte* , the type of request being sent, values: `F` | `C` | `D` | `M`
+request type: *1 byte* , the type of request being sent, values: `F` | `C` | `D` | `M` | `X`
 
     'F' indicates *normal file upload*
 
