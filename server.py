@@ -42,11 +42,14 @@ class Server:
     def setup(self):
         server_address = (self.host, self.port)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.settimeout(30)
         self.sock.bind(server_address)
         self.sock.listen(1)
         self.conn, _ = self.sock.accept()
 
     def readInBytes(self, n):
+        # BUG?: we should probably make sure we read n bytes
+        
         data_bytes = self.conn.recv(n)
         return io.BytesIO(data_bytes).read(n)
 
@@ -67,7 +70,7 @@ class Server:
         return zlib.decompress(cdata), cdata_len
 
     # make sure we don't get a milicious request that modifies a file outsides of
-    def checkPath(self, fp):
+    def isPathValid(self, fp):
         if os.path.commonprefix((os.path.realpath(fp),
                                  os.path.realpath(self.directory))) != os.path.realpath(self.directory):
             return False
@@ -77,17 +80,17 @@ class Server:
         if os.path.exists(dst):
             os.truncate(dst, 0)
 
-    def make_folder(self, fp):
-        dst = "%s/%s" % (self.directory, fp)
-        if self.checkPath(dst):
+    def makeFolder(self, fp):
+        dst = os.path.join(self.directory, fp)
+        if self.isPathValid(dst):
             if not os.path.exists(dst):
                 os.makedirs(dst)
 
     def copyFileAndRename(self, src, dst):
-        src = "%s/%s" % (self.directory, src)
-        dst = "%s/%s" % (self.directory, dst)
+        src = os.path.join(self.directory, src)
+        dst = os.path.join(self.directory, dst)
 
-        if self.checkPath(src) and self.checkPath(dst):
+        if self.isPathValid(src) and self.isPathValid(dst):
             # make dir if it doesn't exist
             dst_folder = os.path.dirname(dst)
             if not os.path.exists(dst):
@@ -99,10 +102,10 @@ class Server:
             copyfile(src, dst)
 
     def moveFileFolder(self, src, dst):
-        src = "%s/%s" % (self.directory, src)
-        dst = "%s/%s" % (self.directory, dst)
+        src = os.path.join(self.directory, src)
+        dst = os.path.join(self.directory, dst)
 
-        if self.checkPath(src) and self.checkPath(dst):
+        if self.isPathValid(src) and self.isPathValid(dst):
             dst_folder = os.path.dirname(dst)
             if not os.path.exists(dst_folder):
                 try:
@@ -123,9 +126,9 @@ class Server:
             f.write(data)
 
     def rmFile(self, fp):
-        fp = "%s/%s" % (self.directory, fp)
+        fp = os.path.join(self.directory, fp)
 
-        if not self.checkPath(fp):
+        if not self.isPathValid(fp):
             logging.warn("Path traversal - ignore request.")
             return
 
@@ -143,7 +146,7 @@ class Server:
             logging.warn("Tried to delete a folder!")
 
     def parseFilePayload(self, fp, size, sha256expected):
-        fp = "%s/%s" % (self.directory, fp)
+        fp = os.path.join(self.directory, fp)
 
         sha256_calculated = hashlib.sha256()
         bytes_left, total_size = size, size
@@ -153,7 +156,7 @@ class Server:
             if percent == 100:
                 print()
 
-        if not self.checkPath(fp):
+        if not self.isPathValid(fp):
             logging.warn("Path traversal - ignoring file download.")
             # we need to read and discard the rest of the payload..
             while bytes_left > 0:
@@ -185,7 +188,7 @@ class Server:
         logging.debug("File size: {}, Data recieved: {}".format(total_size, total_cdata_len))
 
     # parse header as described in documentation
-    def parseHeader(self):
+    def parse(self):
         data = self.readInBytes(UNSIGNED_LONG_LONG_INT_SIZE + COMMAND_SIZE)
 
         if len(data) == 0:
@@ -263,7 +266,7 @@ class Server:
             folder_path = folder_path.decode()
 
             logging.debug("Creating folder: {}".format(folder_path))
-            self.make_folder(folder_path)
+            self.makeFolder(folder_path)
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
@@ -283,4 +286,4 @@ if __name__ == "__main__":
 
 
     while True:
-        s.parseHeader()
+        s.parse()
