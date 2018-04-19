@@ -151,8 +151,11 @@ class Client():
 
         else:
             # if file, update src/dst
-            if self.seen_hashes.get(src):
-                self.seen_hashes[src] = dst
+            for h in self.seen_hashes:
+                old_path = self.seen_hashes.get(h)
+                if old_path == src:
+                    self.seen_hashes[h] = dst
+
 
     def makeDir(self, fp):
         payload_fmt = "!QcL%ds" % len(fp)
