@@ -21,8 +21,7 @@ If you want the client to connect to remove host, use the same: `export HOST=192
 - [ ] unit tests
 
 Known issues:
-
--there has been some bugs witnessed in regards to moving folders (might be fixed now?)-
+~~there has been some bugs witnessed in regards to moving folders (might be fixed now?)~~
 
 ---
 
